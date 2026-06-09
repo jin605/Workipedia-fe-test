@@ -7,7 +7,7 @@ const router = createRouter({
       path: '/',
       component: () => import('@/components/layout/AppLayout.vue'),
       children: [
-        { path: '', redirect: '/ai-admin' },
+        { path: '', redirect: '/websocket' },
         {
           path: 'ai-admin',
           name: 'ai-admin',

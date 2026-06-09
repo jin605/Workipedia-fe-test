@@ -24,11 +24,11 @@ function clearToken() {
     <aside class="sidebar">
       <div class="sidebar-logo">Workipedia<br /><span>FE Test</span></div>
       <nav class="sidebar-nav">
-        <p class="nav-label">Wireframe</p>
-        <RouterLink to="/ai-admin" class="nav-item" active-class="nav-item--active">AI 관리</RouterLink>
-        <p class="nav-label nav-label--spaced">Integration Test</p>
+        <p class="nav-label">Integration Test</p>
         <RouterLink to="/websocket" class="nav-item" active-class="nav-item--active">Flash Chat WS</RouterLink>
         <RouterLink to="/file-upload" class="nav-item" active-class="nav-item--active">File Upload (R2)</RouterLink>
+        <p class="nav-label nav-label--spaced">Wireframe</p>
+        <RouterLink to="/ai-admin" class="nav-item" active-class="nav-item--active">AI 관리</RouterLink>
       </nav>
       <div class="sidebar-footer">
         <p class="token-label">JWT Token</p>

@@ -1,0 +1,1 @@
+import{z as o,r as n}from"./index-DjGVuEpp.js";function a(){var t;try{const e=localStorage.getItem("fe-test-token");if(e)return e;const r=localStorage.getItem("auth");return r?((t=JSON.parse(r))==null?void 0:t.token)??null:null}catch{return null}}const s=o("auth",()=>({accessToken:n(a())}));export{s as u};
