@@ -13,6 +13,51 @@ const sections: { id: Section; label: string; group: string }[] = [
   { id: 'sync', label: '지식화 현황', group: '운영 현황' },
 ]
 
+const sectionNotices: Record<Section, { label: string; tone: 'optional' | 'required' | 'monitor'; title: string; description: string }> = {
+  prompt: {
+    label: '선택 설정',
+    tone: 'optional',
+    title: '사용자 정의 프롬프트는 필수가 아닙니다.',
+    description: '비활성화하거나 등록하지 않으면 배포 시 고정된 base_prompt만 사용해 답변합니다.',
+  },
+  department: {
+    label: '선택 설정',
+    tone: 'optional',
+    title: '배정 기준을 등록하지 않아도 티켓 기능은 정상 동작합니다.',
+    description: '추천 근거가 없거나 점수가 부족한 티켓은 공통 접수 큐로 이동하며, 관리자가 담당 부서를 지정합니다.',
+  },
+  documents: {
+    label: '선택 데이터',
+    tone: 'optional',
+    title: '매뉴얼 문서가 없어도 AI 서비스는 구동됩니다.',
+    description: '매뉴얼 RAG에서 답을 찾지 못하면 Tool, 해결 티켓 이력, 티켓 생성 순서로 다음 경로를 실행합니다.',
+  },
+  tools: {
+    label: '선택 기능',
+    tone: 'optional',
+    title: 'API Tool은 고객사가 제공하는 연동 기능이 있을 때만 등록합니다.',
+    description: '활성 Tool이 없으면 실시간 데이터 조회 단계를 건너뛰고 다음 RAG 또는 티켓 생성 단계로 이동합니다.',
+  },
+  knowledge: {
+    label: '선택 데이터',
+    tone: 'optional',
+    title: '수기 지식은 문서에 없는 정보를 보완하는 선택 데이터입니다.',
+    description: '등록하지 않아도 기존 매뉴얼, 워키, Tool과 해결 티켓 이력을 이용해 답변합니다.',
+  },
+  routing: {
+    label: '운영 확인',
+    tone: 'monitor',
+    title: '라우팅 품질 화면은 서비스 구동에 필요한 설정이 아닙니다.',
+    description: '추천 부서와 최종 처리 부서의 차이를 확인하고 배정 기준과 임계값을 개선할 때 사용합니다.',
+  },
+  sync: {
+    label: '조건부 필수',
+    tone: 'required',
+    title: '승인 지식을 RAG에 활용한다면 동기화 상태 확인이 필요합니다.',
+    description: '동기화 실패가 전체 AI 서비스를 중단시키지는 않지만, 실패한 지식은 검색 결과에 반영되지 않습니다.',
+  },
+}
+
 const activeSection = ref<Section>('prompt')
 const savedNotice = ref('')
 const toolModalOpen = ref(false)
@@ -105,6 +150,14 @@ function onManualFileChange(event: Event) {
 
       <section class="workspace">
         <div v-if="savedNotice" class="toast">{{ savedNotice }}</div>
+
+        <div class="requirement-notice" :class="`requirement-notice--${sectionNotices[activeSection].tone}`">
+          <span class="requirement-label">{{ sectionNotices[activeSection].label }}</span>
+          <div>
+            <strong>{{ sectionNotices[activeSection].title }}</strong>
+            <p>{{ sectionNotices[activeSection].description }}</p>
+          </div>
+        </div>
 
         <template v-if="activeSection === 'prompt'">
           <div class="workspace-title">
@@ -393,6 +446,7 @@ function onManualFileChange(event: Event) {
           </div>
           <button aria-label="닫기" @click="departmentModalOpen = false">×</button>
         </div>
+        <div class="modal-notice">선택 설정입니다. 미등록 부서와 신뢰도 기준을 통과하지 못한 티켓은 공통 접수 큐로 이동합니다.</div>
         <label>대상 부서
           <select>
             <option>부서를 선택하세요</option>
@@ -437,6 +491,15 @@ function onManualFileChange(event: Event) {
 .header-copy { margin-top: 5px; color: #65717e; font-size: 13px; }
 .header-state { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border: 1px solid #dce3df; border-radius: 6px; background: #f7faf8; color: #315c45; font-size: 12px; font-weight: 600; }
 .status-dot { width: 7px; height: 7px; border-radius: 50%; background: #21a366; }
+.requirement-notice { margin-bottom: 18px; padding: 14px 16px; border: 1px solid #cddceb; border-radius: 7px; background: #f4f8fc; display: flex; align-items: flex-start; gap: 12px; }
+.requirement-label { flex-shrink: 0; padding: 4px 7px; border-radius: 4px; font-size: 10px; font-weight: 700; }
+.requirement-notice strong { color: #2f465c; font-size: 12px; }
+.requirement-notice p { margin-top: 5px; color: #667787; font-size: 11px; line-height: 1.5; }
+.requirement-notice--optional .requirement-label { background: #dbeafa; color: #275f96; }
+.requirement-notice--monitor { border-color: #d9dce0; background: #f7f8f9; }
+.requirement-notice--monitor .requirement-label { background: #e8eaed; color: #59636d; }
+.requirement-notice--required { border-color: #ead7a9; background: #fff9eb; }
+.requirement-notice--required .requirement-label { background: #f6e4b7; color: #7c5812; }
 .admin-shell { display: grid; grid-template-columns: 190px minmax(0, 1fr); min-height: calc(100vh - 116px); }
 .section-nav { padding: 24px 14px; background: #fff; border-right: 1px solid #e1e5e9; }
 .section-group { padding: 0 10px 8px; color: #8a949e; font-size: 10px; font-weight: 700; text-transform: uppercase; }
@@ -548,6 +611,7 @@ code { padding: 2px 5px; border-radius: 3px; background: #f0f2f4; color: #485561
 .modal-header h2 { font-size: 17px; }
 .modal-header p { margin-top: 4px; color: #76818c; font-size: 11px; }
 .modal-header button { width: 30px; height: 30px; border: 0; background: transparent; color: #66727d; font-size: 22px; cursor: pointer; }
+.modal-notice { padding: 10px 12px; border-left: 3px solid #75a1cf; background: #f3f7fb; color: #627587; font-size: 10px; line-height: 1.5; }
 .modal label { display: flex; flex-direction: column; gap: 6px; color: #52606c; font-size: 11px; font-weight: 700; }
 .modal input, .modal select, .modal textarea { width: 100%; min-height: 38px; padding: 9px 10px; border: 1px solid #ccd3da; border-radius: 5px; background: #fff; color: #26323d; font: inherit; font-size: 12px; }
 .modal textarea { min-height: 86px; resize: vertical; }
