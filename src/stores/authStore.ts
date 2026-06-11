@@ -3,16 +3,22 @@ import { ref } from 'vue'
 
 function loadToken(): string | null {
   try {
-    // fe-test 자체 저장 토큰 우선, 없으면 메인 FE 토큰 시도
-    const direct = localStorage.getItem('fe-test-token')
-    if (direct) return direct
-    const raw = localStorage.getItem('auth')
-    return raw ? JSON.parse(raw)?.token ?? null : null
+    return localStorage.getItem('fe-test-token')
   } catch { return null }
 }
 
 export const useAuthStore = defineStore('auth', () => {
   const accessToken = ref<string | null>(loadToken())
 
-  return { accessToken }
+  function setAccessToken(token: string) {
+    accessToken.value = token
+    localStorage.setItem('fe-test-token', token)
+  }
+
+  function clearAccessToken() {
+    accessToken.value = null
+    localStorage.removeItem('fe-test-token')
+  }
+
+  return { accessToken, setAccessToken, clearAccessToken }
 })

@@ -8,14 +8,12 @@ const tokenInput = ref('')
 function applyToken() {
   const t = tokenInput.value.trim()
   if (!t) return
-  auth.accessToken = t
-  localStorage.setItem('fe-test-token', t)
+  auth.setAccessToken(t)
   tokenInput.value = ''
 }
 
 function clearToken() {
-  auth.accessToken = null
-  localStorage.removeItem('fe-test-token')
+  auth.clearAccessToken()
 }
 </script>
 

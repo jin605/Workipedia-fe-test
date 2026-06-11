@@ -7,8 +7,11 @@ type Attachment = { objectKey: string; fileName: string; size: number; downloadU
 
 const logs = ref<Log[]>([])
 const fileInput = ref<HTMLInputElement | null>(null)
-const selectedFileName = ref('')
+const selectedFiles = ref<File[]>([])
 const attachments = ref<Attachment[]>([])
+const isUploading = ref(false)
+
+const MAX_CONCURRENT_UPLOADS = 5
 
 function addLog(text: string, type: Log['type'] = 'info') {
   logs.value.push({ type, text, time: new Date().toLocaleTimeString() })
@@ -21,33 +24,29 @@ function formatSize(bytes: number) {
 }
 
 function onFileChange() {
-  selectedFileName.value = fileInput.value?.files?.[0]?.name ?? ''
+  selectedFiles.value = Array.from(fileInput.value?.files ?? [])
 }
 
-async function upload() {
-  const file = fileInput.value?.files?.[0]
-  if (!file) { addLog('파일을 선택하세요', 'err'); return }
-
+async function uploadFile(file: File) {
   try {
     addLog(`presigned URL 발급 요청: ${file.name}`, 'info')
     const { data: uploadData } = await http.post('/api/v1/storage/presigned-upload', {
       fileName: file.name,
       contentType: file.type || 'application/octet-stream',
     })
-    const { uploadUrl, objectKey } = uploadData.data
+    const { uploadUrl, objectKey } = uploadData
     addLog(`발급 완료 → ${objectKey}`, 'ok')
 
-    addLog('R2 업로드 중...', 'info')
+    addLog(`R2 업로드 중: ${file.name}`, 'info')
     const res = await fetch(uploadUrl, {
       method: 'PUT',
       headers: { 'Content-Type': file.type || 'application/octet-stream' },
       body: file,
     })
     if (!res.ok) {
-      addLog(`R2 업로드 실패: ${res.status} ${res.statusText}`, 'err')
-      return
+      throw new Error(`R2 응답 ${res.status} ${res.statusText}`)
     }
-    addLog('업로드 성공, download URL 발급 중...', 'ok')
+    addLog(`업로드 성공, download URL 발급 중: ${file.name}`, 'ok')
 
     const { data: dlData } = await http.get('/api/v1/storage/presigned-download', {
       params: { objectKey },
@@ -56,15 +55,46 @@ async function upload() {
       objectKey,
       fileName: file.name,
       size: file.size,
-      downloadUrl: dlData.data.downloadUrl,
+      downloadUrl: dlData.downloadUrl,
     })
     addLog(`첨부 완료: ${file.name}`, 'ok')
-
-    if (fileInput.value) fileInput.value.value = ''
-    selectedFileName.value = ''
+    return true
   } catch (e: any) {
-    addLog(`에러: ${e.message}`, 'err')
+    addLog(`업로드 실패 (${file.name}): ${e.message}`, 'err')
+    return false
   }
+}
+
+async function upload() {
+  const files = [...selectedFiles.value]
+  if (!files.length) { addLog('파일을 선택하세요', 'err'); return }
+  if (isUploading.value) return
+
+  isUploading.value = true
+  addLog(`${files.length}개 파일 업로드 시작 (동시 최대 ${MAX_CONCURRENT_UPLOADS}개)`, 'info')
+
+  let nextIndex = 0
+  let successCount = 0
+
+  async function worker() {
+    while (nextIndex < files.length) {
+      const file = files[nextIndex++]
+      if (await uploadFile(file)) successCount++
+    }
+  }
+
+  const workerCount = Math.min(MAX_CONCURRENT_UPLOADS, files.length)
+  await Promise.all(Array.from({ length: workerCount }, () => worker()))
+
+  const failureCount = files.length - successCount
+  addLog(
+    `전체 업로드 완료: 성공 ${successCount}개, 실패 ${failureCount}개`,
+    failureCount ? 'err' : 'ok',
+  )
+
+  isUploading.value = false
+  selectedFiles.value = []
+  if (fileInput.value) fileInput.value.value = ''
 }
 
 async function remove(index: number) {
@@ -89,11 +119,20 @@ async function remove(index: number) {
       <div class="card">
         <div class="section-title">파일 첨부</div>
         <label class="file-label">
-          <input ref="fileInput" type="file" class="file-input" @change="onFileChange" />
-          <span class="btn btn--outline">파일 선택</span>
-          <span class="file-name">{{ selectedFileName || '선택된 파일 없음' }}</span>
+          <input ref="fileInput" type="file" class="file-input" multiple @change="onFileChange" />
+          <span class="btn btn--outline">파일 여러 개 선택</span>
+          <span class="file-name">
+            {{ selectedFiles.length ? `${selectedFiles.length}개 선택됨` : '선택된 파일 없음' }}
+          </span>
         </label>
-        <button class="btn btn--primary" @click="upload">업로드</button>
+        <div v-if="selectedFiles.length" class="selected-list">
+          <span v-for="file in selectedFiles" :key="`${file.name}-${file.size}`" class="selected-file">
+            {{ file.name }} ({{ formatSize(file.size) }})
+          </span>
+        </div>
+        <button class="btn btn--primary" :disabled="isUploading" @click="upload">
+          {{ isUploading ? '업로드 중...' : '업로드' }}
+        </button>
       </div>
 
       <div v-if="attachments.length" class="card">
@@ -138,10 +177,13 @@ async function remove(index: number) {
 .file-label { display: flex; align-items: center; gap: 12px; cursor: pointer; }
 .file-input { display: none; }
 .file-name { font-size: 13px; color: var(--muted); }
+.selected-list { display: flex; flex-direction: column; gap: 4px; }
+.selected-file { font-size: 12px; color: var(--muted); }
 
 .btn { padding: 8px 16px; border-radius: 8px; font-size: 14px; font-weight: 500; cursor: pointer; border: none; white-space: nowrap; align-self: flex-start; }
 .btn--primary { background: var(--blue); color: #fff; }
 .btn--primary:hover { opacity: 0.9; }
+.btn:disabled { cursor: not-allowed; opacity: 0.55; }
 .btn--outline { background: transparent; border: 1px solid var(--line); color: var(--ink); }
 .btn--outline:hover { background: var(--bg-soft); }
 
