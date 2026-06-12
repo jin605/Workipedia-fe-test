@@ -77,9 +77,9 @@ const tools = ref([
 ])
 
 const manualKnowledge = ref([
-  { id: 18, title: '2026년 하계 휴가 신청 안내', category: '인사', content: '휴가 시작일 3영업일 전까지 그룹웨어에서 신청합니다.', chromaId: 'manual-18' },
-  { id: 17, title: 'VPN 인증서 갱신 절차', category: 'IT', content: '보안 포털에서 인증서를 재발급한 뒤 VPN 클라이언트를 재시작합니다.', chromaId: 'manual-17' },
-  { id: 16, title: '신규 자산 지급 기준', category: '자산', content: '신규 입사자와 장비 교체 승인자를 대상으로 지급합니다.', chromaId: '' },
+  { id: 18, title: '2026년 하계 휴가 신청 안내', category: '인사', content: '휴가 시작일 3영업일 전까지 그룹웨어에서 신청합니다.', syncStatus: 'SYNCED' },
+  { id: 17, title: 'VPN 인증서 갱신 절차', category: 'IT', content: '보안 포털에서 인증서를 재발급한 뒤 VPN 클라이언트를 재시작합니다.', syncStatus: 'SYNCED' },
+  { id: 16, title: '신규 자산 지급 기준', category: '자산', content: '신규 입사자와 장비 교체 승인자를 대상으로 지급합니다.', syncStatus: 'PENDING' },
 ])
 
 const filteredTools = computed(() => {
@@ -104,7 +104,7 @@ function addKnowledgeRow() {
     title: '',
     category: 'general',
     content: '',
-    chromaId: '',
+    syncStatus: 'PENDING',
   })
 }
 
@@ -214,7 +214,7 @@ function onManualFileChange(event: Event) {
               <p>티켓을 담당 부서에 추천·배정할 때 사용하는 업무 범위와 시스템 정보를 관리합니다.</p>
             </div>
             <div class="title-actions">
-              <button class="button button--secondary" @click="showSaved('배정 정보를 ChromaDB에 동기화했습니다.')">전체 동기화</button>
+              <button class="button button--secondary" @click="showSaved('배정 정보를 Vector Store에 동기화했습니다.')">전체 동기화</button>
               <button class="button button--primary" @click="departmentModalOpen = true">배정 기준 추가</button>
             </div>
           </div>
@@ -248,7 +248,7 @@ function onManualFileChange(event: Event) {
           <div class="workspace-title">
             <div>
               <h2>매뉴얼 문서 관리</h2>
-              <p>업로드한 사내 문서를 청킹하여 ChromaDB 지식으로 반영합니다.</p>
+              <p>업로드한 사내 문서를 청킹하여 AI 검색 지식으로 반영합니다.</p>
             </div>
           </div>
           <div class="document-grid">
@@ -265,8 +265,8 @@ function onManualFileChange(event: Event) {
                 <label class="field">문서 제목<input placeholder="예: 정보보안 운영 매뉴얼" /></label>
                 <label class="field">분류<input value="general" /></label>
               </div>
-              <div class="inline-note">업로드 문서는 AI 서버에서 마스킹, 청킹, 임베딩 후 ChromaDB에 반영됩니다.</div>
-              <button class="button button--primary" :disabled="!selectedFileName" @click="showSaved('문서 적재를 요청했습니다.')">ChromaDB에 적재</button>
+              <div class="inline-note">업로드 문서는 AI 서버에서 마스킹, 청킹, 임베딩 후 Vector Store에 반영됩니다.</div>
+              <button class="button button--primary" :disabled="!selectedFileName" @click="showSaved('문서 적재를 요청했습니다.')">검색 지식에 적재</button>
             </div>
             <div class="document-summary">
               <div class="metric"><span>Parent 문서</span><strong>24</strong></div>
@@ -329,7 +329,7 @@ function onManualFileChange(event: Event) {
           <div class="workspace-title">
             <div>
               <h2>수기 지식 관리</h2>
-              <p>RDB의 수기 지식을 표에서 편집하고 ChromaDB와 동기화합니다.</p>
+              <p>RDB의 수기 지식을 표에서 편집하고 Vector Store와 동기화합니다.</p>
             </div>
             <div class="title-actions">
               <button class="button button--secondary" @click="addKnowledgeRow">행 추가</button>
@@ -338,21 +338,21 @@ function onManualFileChange(event: Event) {
           </div>
           <div class="table-wrap">
             <table class="editor-table">
-              <thead><tr><th>ID</th><th>제목</th><th>분류</th><th>내용</th><th>Chroma Doc ID</th><th></th></tr></thead>
+              <thead><tr><th>ID</th><th>제목</th><th>분류</th><th>내용</th><th>동기화 상태</th><th></th></tr></thead>
               <tbody>
                 <tr v-for="(item, index) in manualKnowledge" :key="`${item.id}-${index}`">
                   <td>{{ item.id || '신규' }}</td>
                   <td><input v-model="item.title" placeholder="제목 입력" /></td>
                   <td><input v-model="item.category" /></td>
                   <td><textarea v-model="item.content"></textarea></td>
-                  <td><code>{{ item.chromaId || '동기화 전' }}</code></td>
+                  <td><span :class="['badge', item.syncStatus === 'SYNCED' ? 'badge--green' : 'badge--amber']">{{ item.syncStatus }}</span></td>
                   <td><button class="text-button text-button--danger" @click="removeKnowledgeRow(index)">삭제</button></td>
                 </tr>
               </tbody>
             </table>
           </div>
           <div class="sync-action">
-            <div><strong>ChromaDB 전체 동기화</strong><p>저장된 수기 지식을 다시 청킹하고 Vector Store에 반영합니다.</p></div>
+            <div><strong>Vector Store 전체 동기화</strong><p>저장된 수기 지식을 다시 청킹하고 검색 인덱스에 반영합니다.</p></div>
             <button class="button button--secondary" @click="showSaved(`${manualKnowledge.length}건의 전체 동기화를 요청했습니다.`)">전체 동기화</button>
           </div>
         </template>
@@ -392,7 +392,7 @@ function onManualFileChange(event: Event) {
           <div class="workspace-title">
             <div>
               <h2>지식화 현황</h2>
-              <p>승인된 지식 데이터의 ChromaDB 반영 상태를 확인합니다.</p>
+              <p>승인된 지식 데이터의 Vector Store 반영 상태를 확인합니다.</p>
             </div>
             <button class="button button--secondary" @click="showSaved('실패 항목 재처리를 요청했습니다.')">실패 항목 재처리</button>
           </div>
@@ -406,7 +406,7 @@ function onManualFileChange(event: Event) {
             <div><span>1</span><strong>승인 완료</strong><small>RDB 저장</small></div>
             <i></i><div><span>2</span><strong>민감정보 마스킹</strong><small>원문 미보관</small></div>
             <i></i><div><span>3</span><strong>청킹·임베딩</strong><small>AI 처리</small></div>
-            <i></i><div><span>4</span><strong>Vector 반영</strong><small>ChromaDB</small></div>
+            <i></i><div><span>4</span><strong>Vector 반영</strong><small>Qdrant</small></div>
           </div>
           <div class="table-wrap">
             <table>
