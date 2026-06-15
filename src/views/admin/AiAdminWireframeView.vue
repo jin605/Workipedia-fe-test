@@ -62,9 +62,65 @@ const activeSection = ref<Section>('prompt')
 const savedNotice = ref('')
 const toolModalOpen = ref(false)
 const departmentModalOpen = ref(false)
+const departmentEditModalOpen = ref(false)
 const toolFilter = ref('전체')
 const routingFilter = ref('전체')
 const promptEnabled = ref(true)
+const aiInstruction = ref('')
+const aiLoading = ref(false)
+const editingDepartment = ref<{ departmentId: number; departmentName: string; rr: string; keywords: string } | null>(null)
+
+const allDepartments = [
+  { departmentId: 1, departmentName: '개발 1팀' },
+  { departmentId: 2, departmentName: '개발 2팀' },
+  { departmentId: 3, departmentName: 'IT지원팀' },
+  { departmentId: 4, departmentName: '자산관리팀' },
+  { departmentId: 5, departmentName: '정보보안팀' },
+  { departmentId: 6, departmentName: '인사팀' },
+  { departmentId: 7, departmentName: '법무팀' },
+  { departmentId: 8, departmentName: '경영지원팀' },
+]
+
+const departments = ref([
+  { departmentId: 1, departmentName: '개발 1팀', rr: '개발 1팀은 ERP 및 사내 계정 서비스를 담당한다.', keywords: '권한, 로그인, 배치 오류', cases: 142, syncStatus: 'SYNCED' },
+  { departmentId: 2, departmentName: '개발 2팀', rr: '개발 2팀은 검색 및 AI 서비스를 담당한다.', keywords: '검색 품질, 챗봇 응답', cases: 96, syncStatus: 'SYNCED' },
+  { departmentId: 3, departmentName: 'IT지원팀', rr: 'IT지원팀은 임직원 IT 환경을 지원한다.', keywords: '접속, 노트북, 네트워크', cases: 238, syncStatus: 'SYNCED' },
+  { departmentId: 4, departmentName: '자산관리팀', rr: '자산관리팀은 IT 자산 지급 및 회수를 담당한다.', keywords: '지급, 반납, 재고', cases: 81, syncStatus: 'PENDING' },
+])
+
+const unregisteredDepartments = computed(() => {
+  const registeredIds = new Set(departments.value.map(d => d.departmentId))
+  return allDepartments.filter(d => !registeredIds.has(d.departmentId))
+})
+
+function openEditModal(dept: typeof departments.value[0]) {
+  editingDepartment.value = { departmentId: dept.departmentId, departmentName: dept.departmentName, rr: dept.rr, keywords: dept.keywords }
+  departmentEditModalOpen.value = true
+}
+
+function saveEditModal() {
+  if (!editingDepartment.value) return
+  const dept = departments.value.find(d => d.departmentId === editingDepartment.value!.departmentId)
+  if (dept) {
+    dept.departmentName = editingDepartment.value.departmentName
+    dept.rr = editingDepartment.value.rr
+    dept.keywords = editingDepartment.value.keywords
+  }
+  departmentEditModalOpen.value = false
+  showSaved('배정 기준을 저장하고 Vector Store에 반영했습니다.')
+}
+
+function applyAiInstruction() {
+  if (!aiInstruction.value.trim()) return
+  aiLoading.value = true
+  window.setTimeout(() => {
+    departments.value[1].rr = '개발 2팀은 검색과 RAG를 담당한다.'
+    departments.value[1].keywords = '검색 품질, RAG, 챗봇 응답'
+    aiLoading.value = false
+    aiInstruction.value = ''
+    showSaved('AI가 R&R을 수정하고 Vector Store에 반영했습니다.')
+  }, 1200)
+}
 const customPrompt = ref(
   '답변은 간결한 업무 문체로 작성하고, 처리 절차가 여러 단계라면 번호 목록으로 안내합니다.',
 )
@@ -211,31 +267,47 @@ function onManualFileChange(event: Event) {
           <div class="workspace-title">
             <div>
               <h2>부서 티켓 배정 관리</h2>
-              <p>티켓을 담당 부서에 추천·배정할 때 사용하는 업무 범위와 시스템 정보를 관리합니다.</p>
+              <p>티켓을 담당 부서에 추천·배정할 때 사용하는 R&R 설명을 관리합니다.</p>
             </div>
-            <div class="title-actions">
-              <button class="button button--secondary" @click="showSaved('배정 정보를 Vector Store에 동기화했습니다.')">전체 동기화</button>
-              <button class="button button--primary" @click="departmentModalOpen = true">배정 기준 추가</button>
-            </div>
+            <button class="button button--primary" @click="departmentModalOpen = true">배정 기준 추가</button>
           </div>
-          <div class="metric-row">
-            <div class="metric"><span>배정 기준 등록 부서</span><strong>4</strong></div>
-            <div class="metric"><span>승인 라우팅 사례</span><strong>557</strong></div>
-            <div class="metric"><span>동기화 대기</span><strong>1</strong></div>
+
+          <div class="setting-block ai-instruction-block">
+            <div class="setting-heading">
+              <div>
+                <h3>AI 일괄 수정</h3>
+                <p>자연어로 여러 부서의 R&R을 한 번에 수정하고 즉시 동기화합니다. 변경이 필요한 부서만 반영됩니다.</p>
+              </div>
+            </div>
+            <div class="ai-input-row">
+              <input
+                v-model="aiInstruction"
+                class="search-input ai-input"
+                placeholder="예: 개발 2팀에 RAG 추가하고 IT지원팀에서 VPN 빼줘"
+                @keyup.enter="applyAiInstruction"
+              />
+              <button class="button button--primary" :disabled="!aiInstruction.trim() || aiLoading" @click="applyAiInstruction">
+                {{ aiLoading ? '적용 중...' : 'AI 적용' }}
+              </button>
+            </div>
+            <div class="inline-note" style="margin-bottom:0">LLM이 현재 R&R을 기준으로 변경 내용을 해석해 수정하고 Vector Store에 즉시 반영합니다.</div>
+          </div>
+
+          <div class="metric-row" style="margin-top:16px">
+            <div class="metric"><span>배정 기준 등록 부서</span><strong>{{ departments.length }}</strong></div>
             <div class="metric"><span>최근 추천 일치율</span><strong>87.4%</strong></div>
           </div>
-          <div class="toolbar">
-            <input class="search-input" placeholder="부서명 또는 담당 시스템 검색" />
-            <span class="count-label">전체 4개 부서</span>
-          </div>
+
           <div class="table-wrap">
             <table>
-              <thead><tr><th>부서</th><th>담당 시스템</th><th>업무 키워드</th><th>승인 사례</th><th>동기화</th><th>상태</th><th></th></tr></thead>
+              <thead><tr><th>부서</th><th>R&R 설명</th><th>업무 키워드</th><th></th></tr></thead>
               <tbody>
-                <tr><td><strong>개발1팀</strong><small>ERP 및 사내 계정 서비스 운영</small></td><td>ERP, 계정 시스템</td><td>권한, 로그인, 배치 오류</td><td>142건</td><td><span class="badge badge--green">SYNCED</span></td><td><span class="badge badge--green">활성</span></td><td><button class="text-button">수정</button></td></tr>
-                <tr><td><strong>개발2팀</strong><small>검색 및 AI 서비스 운영</small></td><td>검색, RAG</td><td>검색 품질, 챗봇 응답</td><td>96건</td><td><span class="badge badge--green">SYNCED</span></td><td><span class="badge badge--green">활성</span></td><td><button class="text-button">수정</button></td></tr>
-                <tr><td><strong>IT지원팀</strong><small>임직원 IT 환경 지원</small></td><td>VPN, 사내 장비</td><td>접속, 노트북, 네트워크</td><td>238건</td><td><span class="badge badge--green">SYNCED</span></td><td><span class="badge badge--green">활성</span></td><td><button class="text-button">수정</button></td></tr>
-                <tr><td><strong>자산관리팀</strong><small>IT 자산 지급 및 회수</small></td><td>자산 포털</td><td>지급, 반납, 재고</td><td>81건</td><td><span class="badge badge--amber">PENDING</span></td><td><span class="badge badge--gray">검토 필요</span></td><td><button class="text-button">수정</button></td></tr>
+                <tr v-for="dept in departments" :key="dept.departmentId">
+                  <td><strong>{{ dept.departmentName }}</strong></td>
+                  <td><span class="rr-text">{{ dept.rr }}</span></td>
+                  <td><span class="keyword-text">{{ dept.keywords }}</span></td>
+                  <td><button class="text-button" @click="openEditModal(dept)">수정</button></td>
+                </tr>
               </tbody>
             </table>
           </div>
@@ -441,41 +513,63 @@ function onManualFileChange(event: Event) {
       <div class="modal modal--wide">
         <div class="modal-header">
           <div>
-            <h2>부서 배정 기준 추가</h2>
-            <p>티켓 라우팅에 사용할 부서의 업무 범위를 등록합니다.</p>
+            <h2>배정 기준 추가</h2>
+            <p>티켓 라우팅에 사용할 부서의 R&R 설명을 등록합니다.</p>
           </div>
           <button aria-label="닫기" @click="departmentModalOpen = false">×</button>
         </div>
         <div class="modal-notice">선택 설정입니다. 미등록 부서와 신뢰도 기준을 통과하지 못한 티켓은 공통 접수 큐로 이동합니다.</div>
         <label>대상 부서
           <select>
-            <option>부서를 선택하세요</option>
-            <option>정보보안팀</option>
-            <option>인사팀</option>
-            <option>법무팀</option>
-            <option>경영지원팀</option>
+            <option value="">부서를 선택하세요</option>
+            <option v-for="dept in unregisteredDepartments" :key="dept.departmentId" :value="dept.departmentId">
+              {{ dept.departmentName }}
+            </option>
           </select>
+          <small v-if="unregisteredDepartments.length === 0">배정 기준이 미등록된 부서가 없습니다.</small>
         </label>
         <label>R&R 설명
-          <textarea placeholder="예: 정보보안팀은 보안 정책, 계정 침해, 악성코드 및 개인정보 유출 사고를 담당합니다."></textarea>
+          <textarea placeholder="예: 정보보안팀은 보안 정책, 계정 침해, 악성코드 및 개인정보 유출 사고를 담당한다."></textarea>
         </label>
-        <div class="modal-grid">
-          <label>담당 시스템
-            <input placeholder="보안 포털, DLP, 백신" />
-            <small>쉼표로 구분해 입력합니다.</small>
-          </label>
-          <label>업무 키워드
-            <input placeholder="침해사고, 악성코드, 개인정보" />
-            <small>구체적인 업무 용어를 입력합니다.</small>
-          </label>
-        </div>
-        <label class="check-row">
-          <input type="checkbox" checked />
-          등록 후 티켓 라우팅에 즉시 사용
+        <label>업무 키워드
+          <input placeholder="예: 침해사고, 악성코드, 개인정보" />
+          <small>쉼표로 구분해 입력합니다.</small>
         </label>
         <div class="modal-actions">
           <button class="button button--secondary" @click="departmentModalOpen = false">취소</button>
-          <button class="button button--primary" @click="departmentModalOpen = false; showSaved('부서 배정 기준을 등록하고 동기화를 요청했습니다.')">등록 및 동기화</button>
+          <button class="button button--primary" @click="departmentModalOpen = false; showSaved('배정 기준을 등록하고 동기화를 요청했습니다.')">등록 및 동기화</button>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="departmentEditModalOpen" class="modal-backdrop" @click.self="departmentEditModalOpen = false">
+      <div class="modal modal--wide">
+        <div class="modal-header">
+          <div>
+            <h2>배정 기준 수정</h2>
+            <p v-if="editingDepartment">{{ editingDepartment.departmentName }}</p>
+          </div>
+          <button aria-label="닫기" @click="departmentEditModalOpen = false">×</button>
+        </div>
+        <template v-if="editingDepartment">
+          <label>부서명
+            <select v-model="editingDepartment.departmentName">
+              <option v-for="dept in allDepartments" :key="dept.departmentId" :value="dept.departmentName">
+                {{ dept.departmentName }}
+              </option>
+            </select>
+          </label>
+          <label>R&R 설명
+            <textarea v-model="editingDepartment.rr" style="min-height:100px" placeholder="예: 개발 2팀은 검색 및 AI 서비스를 담당한다."></textarea>
+          </label>
+          <label>업무 키워드
+            <input v-model="editingDepartment.keywords" placeholder="예: 검색 품질, RAG, 챗봇 응답" />
+            <small>쉼표로 구분해 입력합니다.</small>
+          </label>
+        </template>
+        <div class="modal-actions">
+          <button class="button button--secondary" @click="departmentEditModalOpen = false">취소</button>
+          <button class="button button--primary" @click="saveEditModal">저장</button>
         </div>
       </div>
     </div>
@@ -623,6 +717,11 @@ code { padding: 2px 5px; border-radius: 3px; background: #f0f2f4; color: #485561
 .check-row input { width: 15px; min-height: 15px; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
 .routing-note { margin-top: 14px; }
+.ai-instruction-block { margin-bottom: 0; }
+.ai-input-row { display: flex; gap: 8px; margin-bottom: 12px; }
+.ai-input { flex: 1; width: auto; min-width: 0; }
+.rr-text { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; max-width: 340px; line-height: 1.5; color: #3d4b57; font-size: 12px; }
+.keyword-text { color: #587493; font-size: 11px; }
 
 @media (max-width: 1100px) {
   .workspace { padding: 24px; }

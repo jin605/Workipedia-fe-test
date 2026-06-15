@@ -1,0 +1,1 @@
+import{z as r,r as c}from"./index-BHPThljg.js";function s(){try{return localStorage.getItem("fe-test-token")}catch{return null}}const l=r("auth",()=>{const e=c(s());function o(t){e.value=t,localStorage.setItem("fe-test-token",t)}function n(){e.value=null,localStorage.removeItem("fe-test-token")}return{accessToken:e,setAccessToken:o,clearAccessToken:n}});export{l as u};
