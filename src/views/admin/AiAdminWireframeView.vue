@@ -2,6 +2,8 @@
 import { computed, ref } from 'vue'
 
 type Section = 'prompt' | 'department' | 'documents' | 'tools' | 'knowledge' | 'routing' | 'sync'
+type HttpParamLocation = 'PATH' | 'QUERY' | 'HEADER'
+type ToolScope = 'self' | 'open' | null
 
 const sections: { id: Section; label: string; group: string }[] = [
   { id: 'prompt', label: '프롬프트 관리', group: 'AI 설정' },
@@ -61,6 +63,7 @@ const sectionNotices: Record<Section, { label: string; tone: 'optional' | 'requi
 const activeSection = ref<Section>('prompt')
 const savedNotice = ref('')
 const toolModalOpen = ref(false)
+const dbToolModalOpen = ref(false)
 const departmentModalOpen = ref(false)
 const departmentEditModalOpen = ref(false)
 const toolFilter = ref('전체')
@@ -69,6 +72,41 @@ const promptEnabled = ref(true)
 const aiInstruction = ref('')
 const aiLoading = ref(false)
 const editingDepartment = ref<{ departmentId: number; departmentName: string; rr: string; keywords: string } | null>(null)
+
+// DB Query Tool은 카탈로그 스캔 없이 미리 등록된 고정 datasource 중에서만 고른다(애플리케이션 설정에 있는 값).
+const fixedDatasources = [
+  { key: 'hr_readonly_db', label: 'hr_readonly_db (사내 인사 DB, 읽기전용)' },
+  { key: 'asset_readonly_db', label: 'asset_readonly_db (자산관리 DB, 읽기전용)' },
+]
+
+const httpApiForm = ref({
+  name: 'get_home_server_status',
+  description: '홈서버의 현재 상태를 조회할 때 사용합니다.',
+  method: 'GET',
+  endpointUrl: 'https://api.workinprocess.dev/internal/server/{serverId}/status',
+  authType: 'API_KEY',
+  authHeaderName: 'X-API-Key',
+  authKeyValue: '********',
+  scope: null as ToolScope,
+})
+const httpApiParams = ref([
+  { id: 1, name: 'serverId', location: 'PATH' as HttpParamLocation, dataType: 'string', required: true, description: '조회할 서버 ID', exampleValue: 'home-main' },
+])
+const nextHttpParamId = ref(2)
+const httpSelfBindParamId = ref<number | null>(null)
+
+const dbToolForm = ref({
+  name: 'get_user_contact',
+  description: '사번으로 사용자의 이름과 이메일을 조회합니다.',
+  datasourceKey: fixedDatasources[0].key,
+  queryTemplate: 'SELECT name, email FROM employees WHERE emp_no = :empNo',
+  scope: null as ToolScope,
+})
+const dbToolParams = ref([
+  { id: 1, name: 'empNo', dataType: 'string', required: true },
+])
+const nextDbParamId = ref(2)
+const dbSelfBindParamId = ref<number | null>(null)
 
 const allDepartments = [
   { departmentId: 1, departmentName: '개발 1팀' },
@@ -127,10 +165,34 @@ const customPrompt = ref(
 const selectedFileName = ref('')
 
 const tools = ref([
-  { name: 'get_employee_info', description: '사번 또는 이름으로 임직원 정보를 조회합니다.', endpoint: '/api/hr/employees', method: 'GET', type: 'HTTP API', status: '정상', active: true, calls: '1,248' },
-  { name: 'get_leave_balance', description: '로그인 사용자의 잔여 연차를 조회합니다.', endpoint: '/api/hr/leave-balance', method: 'GET', type: 'HTTP API', status: '정상', active: true, calls: '864' },
-  { name: 'get_company_asset', description: '자산 번호로 지급 장비 정보를 조회합니다.', endpoint: 'asset_readonly', method: 'SELECT', type: 'DB Query', status: '승인됨', active: false, calls: '327' },
+  { name: 'get_employee_info', description: '사번 또는 이름으로 임직원 정보를 조회합니다.', target: 'GET https://hr.example.com/api/employees/{empNo}', type: 'HTTP API', scope: 'open' as Exclude<ToolScope, null>, active: true },
+  { name: 'get_leave_balance', description: '로그인 사용자의 잔여 연차를 조회합니다.', target: 'GET https://hr.example.com/api/leave-balance/{empNo}', type: 'HTTP API', scope: 'self' as Exclude<ToolScope, null>, active: true },
+  { name: 'get_user_contact', description: '사번으로 사용자의 이름과 이메일을 조회합니다.', target: 'hr_readonly_db · SELECT name, email FROM employees WHERE emp_no = :empNo', type: 'DB Query', scope: 'open' as Exclude<ToolScope, null>, active: false },
+  { name: 'get_company_asset', description: '자산 번호로 지급 장비 정보를 조회합니다.', target: 'asset_readonly_db · SELECT * FROM assets WHERE asset_no = :assetNo', type: 'DB Query', scope: 'open' as Exclude<ToolScope, null>, active: true },
 ])
+
+const httpFinalRequestUrl = computed(() => {
+  let url = httpApiForm.value.endpointUrl
+  const queryParams = new URLSearchParams()
+
+  httpApiParams.value.forEach((param) => {
+    if (!param.name.trim()) return
+    const exampleValue = param.exampleValue.trim()
+
+    if (param.location === 'PATH') {
+      const value = exampleValue || `{${param.name}}`
+      url = url.split(`{${param.name}}`).join(encodeURIComponent(value))
+    }
+
+    if (param.location === 'QUERY' && exampleValue) {
+      queryParams.set(param.name, exampleValue)
+    }
+  })
+
+  const queryString = queryParams.toString()
+  if (!queryString) return url
+  return `${url}${url.includes('?') ? '&' : '?'}${queryString}`
+})
 
 const manualKnowledge = ref([
   { id: 18, title: '2026년 하계 휴가 신청 안내', category: '인사', content: '휴가 시작일 3영업일 전까지 그룹웨어에서 신청합니다.', syncStatus: 'SYNCED' },
@@ -142,6 +204,139 @@ const filteredTools = computed(() => {
   if (toolFilter.value === '전체') return tools.value
   return tools.value.filter((tool) => tool.type === toolFilter.value)
 })
+
+function selectToolFilter(filter: string) {
+  toolFilter.value = filter
+}
+
+function openHttpToolModal() {
+  httpApiForm.value.scope = null
+  httpSelfBindParamId.value = null
+  toolModalOpen.value = true
+}
+
+function openDbToolModal() {
+  dbToolForm.value.scope = null
+  dbSelfBindParamId.value = null
+  dbToolModalOpen.value = true
+}
+
+// 조회 대상을 "제한 없음"으로 바꾸면 본인 식별값 선택은 의미가 없어지므로 같이 초기화한다.
+function onHttpScopeChange(scope: Exclude<ToolScope, null>) {
+  httpApiForm.value.scope = scope
+  if (scope !== 'self') httpSelfBindParamId.value = null
+}
+
+function onDbScopeChange(scope: Exclude<ToolScope, null>) {
+  dbToolForm.value.scope = scope
+  if (scope !== 'self') dbSelfBindParamId.value = null
+}
+
+function submitHttpTool() {
+  if (!httpApiForm.value.scope) {
+    showSaved('조회 대상을 선택하세요 (호출자 본인만 / 제한 없음).')
+    return
+  }
+  if (httpApiForm.value.scope === 'self' && httpSelfBindParamId.value === null) {
+    showSaved('본인 식별값으로 사용할 파라미터를 선택하세요.')
+    return
+  }
+  toolModalOpen.value = false
+  showSaved('HTTP API Tool을 등록했습니다.')
+}
+
+function submitDbTool() {
+  if (!dbToolForm.value.scope) {
+    showSaved('조회 대상을 선택하세요 (호출자 본인만 / 제한 없음).')
+    return
+  }
+  if (dbToolForm.value.scope === 'self' && dbSelfBindParamId.value === null) {
+    showSaved('본인 식별값으로 사용할 파라미터를 선택하세요.')
+    return
+  }
+  dbToolModalOpen.value = false
+  showSaved('DB Query Tool을 등록했습니다.')
+}
+
+function addDbParam() {
+  dbToolParams.value.push({ id: nextDbParamId.value, name: '', dataType: 'string', required: false })
+  nextDbParamId.value += 1
+}
+
+function removeDbParam(id: number) {
+  dbToolParams.value = dbToolParams.value.filter((param) => param.id !== id)
+  if (dbSelfBindParamId.value === id) dbSelfBindParamId.value = null
+}
+
+function addHttpParam() {
+  const existingNames = new Set(httpApiParams.value.map((param) => param.name.trim()).filter(Boolean))
+  let candidateName = 'param'
+  let index = 1
+  while (existingNames.has(candidateName)) {
+    index += 1
+    candidateName = `param${index}`
+  }
+
+  httpApiParams.value.push({
+    id: nextHttpParamId.value,
+    name: candidateName,
+    location: 'QUERY',
+    dataType: 'string',
+    required: false,
+    description: '',
+    exampleValue: '',
+  })
+  nextHttpParamId.value += 1
+}
+
+function removeHttpParam(id: number) {
+  httpApiParams.value = httpApiParams.value.filter((param) => param.id !== id)
+}
+
+function getDefaultHttpParamDescription(name: string) {
+  if (name === 'serverId') return '조회할 서버 ID'
+  if (name === 'employeeNo') return '조회할 사번'
+  return ''
+}
+
+function getDefaultHttpParamExample(name: string) {
+  if (name === 'serverId') return 'home-main'
+  if (name === 'employeeNo') return 'E001'
+  return ''
+}
+
+function syncPathParamsFromEndpoint() {
+  const pathParamNames = Array.from(httpApiForm.value.endpointUrl.matchAll(/\{([^}/?#]+)\}/g)).map((match) => match[1])
+  const existingNames = new Set(httpApiParams.value.map((param) => param.name.trim()).filter(Boolean))
+
+  pathParamNames.forEach((name) => {
+    if (existingNames.has(name)) return
+    httpApiParams.value.push({
+      id: nextHttpParamId.value,
+      name,
+      location: 'PATH',
+      dataType: 'string',
+      required: true,
+      description: getDefaultHttpParamDescription(name),
+      exampleValue: getDefaultHttpParamExample(name),
+    })
+    nextHttpParamId.value += 1
+    existingNames.add(name)
+  })
+}
+
+function updateHttpParamName(id: number, name: string) {
+  const trimmedName = name.trim()
+  const duplicated = trimmedName && httpApiParams.value.some((param) => param.id !== id && param.name.trim() === trimmedName)
+  if (duplicated) {
+    showSaved('같은 파라미터명은 중복 등록할 수 없습니다.')
+    return
+  }
+
+  const param = httpApiParams.value.find((item) => item.id === id)
+  if (!param) return
+  param.name = name
+}
 
 function showSaved(message: string) {
   savedNotice.value = message
@@ -365,32 +560,43 @@ function onManualFileChange(event: Event) {
           <div class="workspace-title">
             <div>
               <h2>API Tool 관리</h2>
-              <p>등록된 API 명세를 런타임 Tool로 바인딩합니다. DB Query는 승인된 항목만 활성화할 수 있습니다.</p>
+              <p>HTTP API와 DB Query Tool을 등록하고 활성/비활성 상태를 관리합니다.</p>
             </div>
-            <button class="button button--primary" @click="toolModalOpen = true">Tool 등록</button>
           </div>
+
           <div class="toolbar">
             <div class="segmented">
-              <button v-for="filter in ['전체', 'HTTP API', 'DB Query']" :key="filter" :class="{ active: toolFilter === filter }" @click="toolFilter = filter">{{ filter }}</button>
+              <button v-for="filter in ['전체', 'HTTP API', 'DB Query']" :key="filter" :class="{ active: toolFilter === filter }" @click="selectToolFilter(filter)">{{ filter }}</button>
             </div>
-            <button class="button button--secondary" @click="showSaved('Tool 변경사항을 저장했습니다.')">변경사항 저장</button>
+            <div class="title-actions">
+              <button class="button button--secondary" @click="openDbToolModal">DB Query Tool 등록</button>
+              <button class="button button--primary" @click="openHttpToolModal">HTTP API 등록</button>
+            </div>
+          </div>
+
+          <div class="toolbar">
+            <span class="count-label">{{ filteredTools.length }}개 Tool</span>
           </div>
           <div class="table-wrap">
             <table class="editable-table">
-              <thead><tr><th>Tool 이름 / 설명</th><th>Endpoint</th><th>Method</th><th>유형</th><th>상태</th><th>활성</th></tr></thead>
+              <thead><tr><th>Tool 이름 / 설명</th><th>대상</th><th>유형</th><th>범위</th><th>활성</th><th>관리</th></tr></thead>
               <tbody>
                 <tr v-for="tool in filteredTools" :key="tool.name">
                   <td><strong>{{ tool.name }}</strong><small>{{ tool.description }}</small></td>
-                  <td><code>{{ tool.endpoint }}</code></td>
-                  <td><span class="method">{{ tool.method }}</span></td>
+                  <td><code>{{ tool.target }}</code></td>
                   <td>{{ tool.type }}</td>
-                  <td><span class="badge badge--green">{{ tool.status }}</span></td>
+                  <td>
+                    <span :class="['badge', tool.scope === 'self' ? 'badge--scope-self' : 'badge--scope-open']">
+                      {{ tool.scope === 'self' ? '🔒 본인전용' : '⚠️ 제한없음' }}
+                    </span>
+                  </td>
                   <td>
                     <label class="toggle">
                       <input :checked="tool.active" type="checkbox" @change="toggleTool(tool)" />
                       <span></span>
                     </label>
                   </td>
+                  <td><button class="text-button" @click="showSaved(`${tool.name} 연결 체크에 성공했습니다.`)">연결 체크</button></td>
                 </tr>
               </tbody>
             </table>
@@ -495,17 +701,153 @@ function onManualFileChange(event: Event) {
     </div>
 
     <div v-if="toolModalOpen" class="modal-backdrop" @click.self="toolModalOpen = false">
-      <div class="modal">
-        <div class="modal-header"><h2>API Tool 등록</h2><button aria-label="닫기" @click="toolModalOpen = false">×</button></div>
-        <label>Tool 이름<input placeholder="예: get_travel_expense" /></label>
-        <label>설명<textarea placeholder="LLM이 이 Tool을 선택해야 하는 조건을 입력하세요."></textarea></label>
-        <div class="modal-grid">
-          <label>유형<select><option>HTTP API</option><option>DB Query</option></select></label>
-          <label>HTTP Method<select><option>GET</option><option>POST</option><option>PUT</option><option>DELETE</option></select></label>
+      <div class="modal modal--wide">
+        <div class="modal-header">
+          <div>
+            <h2>HTTP API 등록</h2>
+            <p>GET 기반 HTTP API Tool을 등록하고 연결 상태를 확인합니다.</p>
+          </div>
+          <button aria-label="닫기" @click="toolModalOpen = false">×</button>
         </div>
-        <label>Endpoint URL<input placeholder="https://internal-api.example.com/v1/..." /></label>
-        <label>Parameters JSON Schema<textarea class="code-input" placeholder='{"type":"object","properties":{}}'></textarea></label>
-        <div class="modal-actions"><button class="button button--secondary" @click="toolModalOpen = false">취소</button><button class="button button--primary" @click="toolModalOpen = false; showSaved('Tool 초안을 등록했습니다.')">등록</button></div>
+        <label>Tool 이름<input v-model="httpApiForm.name" /></label>
+        <label>Description<textarea v-model="httpApiForm.description"></textarea></label>
+
+        <div class="scope-block">
+          <h3>조회 대상 *</h3>
+          <div class="scope-options">
+            <label class="scope-option">
+              <input type="radio" name="httpScope" :checked="httpApiForm.scope === 'self'" @change="onHttpScopeChange('self')" /> 호출자 본인만
+            </label>
+            <label class="scope-option">
+              <input type="radio" name="httpScope" :checked="httpApiForm.scope === 'open'" @change="onHttpScopeChange('open')" /> 제한 없음 (입력값에 따라 누구든 조회 가능)
+            </label>
+          </div>
+          <div v-if="httpApiForm.scope === 'open'" class="scope-warning">
+            ⚠️ 이 Tool은 입력값에 따라 누구의 정보든 조회될 수 있습니다. 연차·인사정보 등 개인정보를 반환한다면 "호출자 본인만"을 선택하세요.
+          </div>
+          <div v-if="httpApiForm.scope === 'self'" class="self-bind-note">
+            🔒 아래 파라미터 중 하나를 "본인 식별값"으로 선택하세요. 실행 시 AI가 채운 값은 무시되고, 호출자 본인의 사번으로 강제 교체됩니다.
+          </div>
+        </div>
+
+        <label>Method<input v-model="httpApiForm.method" readonly /></label>
+        <label>Endpoint URL<input v-model="httpApiForm.endpointUrl" @input="syncPathParamsFromEndpoint" /></label>
+        <div class="parameter-box">
+          <div class="setting-heading">
+            <div>
+              <h3>요청 파라미터</h3>
+              <p>PATH는 Endpoint URL의 중괄호 값을 치환하고, QUERY는 요청 URL 뒤에 붙습니다.</p>
+            </div>
+            <button class="button button--secondary" @click="addHttpParam">+ 파라미터 추가</button>
+          </div>
+          <div v-for="param in httpApiParams" :key="param.id" class="parameter-row" :class="{ 'parameter-row--self-bind': httpApiForm.scope === 'self' }">
+            <label>파라미터 이름<input :value="param.name" placeholder="serverId" @input="updateHttpParamName(param.id, ($event.target as HTMLInputElement).value)" /></label>
+            <label>위치<select v-model="param.location"><option>PATH</option><option>QUERY</option><option>HEADER</option></select></label>
+            <label>타입<select v-model="param.dataType"><option>string</option><option>number</option><option>boolean</option></select></label>
+            <label class="check-row">
+              <input v-model="param.required" type="checkbox" />
+              필수
+            </label>
+            <label>설명<input v-model="param.description" placeholder="조회할 서버 ID" /></label>
+            <label>예시값<input v-model="param.exampleValue" placeholder="home-main" /></label>
+            <label v-if="httpApiForm.scope === 'self'" class="check-row self-bind-cell">
+              <input type="radio" name="httpSelfBindParam" :checked="httpSelfBindParamId === param.id" @change="httpSelfBindParamId = param.id" />
+              본인 식별값
+            </label>
+            <button v-if="param.location !== 'PATH'" class="text-button text-button--danger" @click="removeHttpParam(param.id)">삭제</button>
+          </div>
+          <div class="request-preview">
+            <span>예시 GET 요청 URL</span>
+            <code>{{ httpFinalRequestUrl }}</code>
+          </div>
+        </div>
+        <div class="auth-box">
+          <h3>인증 설정</h3>
+          <div class="modal-grid">
+            <label>Auth Type<select v-model="httpApiForm.authType"><option>API_KEY</option><option>NONE</option><option>BEARER_TOKEN</option></select></label>
+            <label>인증 Header 이름<input v-model="httpApiForm.authHeaderName" /></label>
+            <label>인증 Key 값<input v-model="httpApiForm.authKeyValue" /></label>
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button class="button button--secondary" @click="toolModalOpen = false">취소</button>
+          <button class="button button--secondary" @click="showSaved('HTTP API 연결 체크에 성공했습니다.')">연결 체크</button>
+          <button class="button button--primary" @click="submitHttpTool">등록</button>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="dbToolModalOpen" class="modal-backdrop" @click.self="dbToolModalOpen = false">
+      <div class="modal modal--wide">
+        <div class="modal-header">
+          <div>
+            <h2>DB Query Tool 등록</h2>
+            <p>미리 등록된 읽기 전용 DB에 SELECT 쿼리를 실행하는 Tool을 만듭니다.</p>
+          </div>
+          <button aria-label="닫기" @click="dbToolModalOpen = false">×</button>
+        </div>
+
+        <label>Tool 이름<input v-model="dbToolForm.name" /></label>
+        <label>Description<textarea v-model="dbToolForm.description"></textarea></label>
+
+        <div class="scope-block">
+          <h3>조회 대상 *</h3>
+          <div class="scope-options">
+            <label class="scope-option">
+              <input type="radio" name="dbScope" :checked="dbToolForm.scope === 'self'" @change="onDbScopeChange('self')" /> 호출자 본인만
+            </label>
+            <label class="scope-option">
+              <input type="radio" name="dbScope" :checked="dbToolForm.scope === 'open'" @change="onDbScopeChange('open')" /> 제한 없음 (입력값에 따라 누구든 조회 가능)
+            </label>
+          </div>
+          <div v-if="dbToolForm.scope === 'open'" class="scope-warning">
+            ⚠️ 이 Tool은 입력값에 따라 누구의 정보든 조회될 수 있습니다. 연차·인사정보 등 개인정보를 반환한다면 "호출자 본인만"을 선택하세요.
+          </div>
+          <div v-if="dbToolForm.scope === 'self'" class="self-bind-note">
+            🔒 아래 파라미터 중 하나를 "본인 식별값"으로 선택하세요. 실행 시 AI가 채운 값은 무시되고, 호출자 본인의 사번으로 강제 교체됩니다.
+          </div>
+        </div>
+
+        <label>Datasource
+          <select v-model="dbToolForm.datasourceKey">
+            <option v-for="source in fixedDatasources" :key="source.key" :value="source.key">{{ source.label }}</option>
+          </select>
+        </label>
+
+        <label>Query Template (SELECT 전용)
+          <textarea v-model="dbToolForm.queryTemplate" class="code-input"></textarea>
+        </label>
+        <div class="modal-notice">
+          단일 SELECT만 허용됩니다. INSERT/UPDATE/DELETE/DROP 등과 세미콜론(;), SQL 주석은 등록 시 거부됩니다. 파라미터는 :이름 형식의 named parameter만 사용하세요.
+        </div>
+
+        <div class="parameter-box">
+          <div class="setting-heading">
+            <div>
+              <h3>쿼리 파라미터</h3>
+            </div>
+            <button class="button button--secondary" @click="addDbParam">+ 파라미터 추가</button>
+          </div>
+          <div v-for="param in dbToolParams" :key="param.id" class="parameter-row parameter-row--db" :class="{ 'parameter-row--self-bind': dbToolForm.scope === 'self' }">
+            <label>파라미터 이름<input v-model="param.name" placeholder="empNo" /></label>
+            <label>타입<select v-model="param.dataType"><option>string</option><option>number</option><option>boolean</option></select></label>
+            <label class="check-row">
+              <input v-model="param.required" type="checkbox" />
+              필수
+            </label>
+            <label v-if="dbToolForm.scope === 'self'" class="check-row self-bind-cell">
+              <input type="radio" name="dbSelfBindParam" :checked="dbSelfBindParamId === param.id" @change="dbSelfBindParamId = param.id" />
+              본인 식별값
+            </label>
+            <button class="text-button text-button--danger" @click="removeDbParam(param.id)">삭제</button>
+          </div>
+        </div>
+
+        <div class="modal-actions">
+          <button class="button button--secondary" @click="dbToolModalOpen = false">취소</button>
+          <button class="button button--secondary" @click="showSaved('DB 연결 및 쿼리 문법을 확인했습니다.')">연결 체크</button>
+          <button class="button button--primary" @click="submitDbTool">등록</button>
+        </div>
       </div>
     </div>
 
@@ -664,7 +1006,9 @@ code { padding: 2px 5px; border-radius: 3px; background: #f0f2f4; color: #485561
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 18px; }
 .field { display: flex; flex-direction: column; gap: 7px; color: #5d6974; font-size: 11px; font-weight: 700; }
 .field--wide { grid-column: 1 / -1; }
-.field > input { min-height: 38px; padding: 9px 10px; border: 1px solid #ccd3da; border-radius: 5px; font: inherit; font-size: 12px; }
+.field > input, .field > select, .field > textarea { min-height: 38px; padding: 9px 10px; border: 1px solid #ccd3da; border-radius: 5px; background: #fff; color: #33404c; font: inherit; font-size: 12px; }
+.field > textarea { min-height: 72px; resize: vertical; line-height: 1.5; }
+.field--compact { min-width: 120px; }
 .file-picker { min-height: 40px; display: flex; align-items: center; gap: 10px; color: #7b858e; font-size: 11px; font-weight: 400; }
 .file-picker input { display: none; }
 .inline-note { margin: 14px 0; padding: 10px 12px; border-left: 3px solid #75a1cf; background: #f3f7fb; color: #687683; font-size: 11px; line-height: 1.55; }
@@ -699,22 +1043,45 @@ code { padding: 2px 5px; border-radius: 3px; background: #f0f2f4; color: #485561
 .pipeline small { margin-top: 3px; color: #7f8992; font-size: 9px; }
 .pipeline > i { height: 1px; background: #cfd6dd; }
 .toast { position: fixed; z-index: 30; top: 22px; right: 24px; padding: 10px 14px; border-radius: 5px; background: #253341; color: #fff; font-size: 12px; box-shadow: 0 6px 18px rgba(0,0,0,.14); }
-.modal-backdrop { position: fixed; z-index: 40; inset: 0; display: grid; place-items: center; padding: 20px; background: rgba(20,28,36,.45); }
-.modal { width: min(480px, 100%); padding: 22px; border-radius: 7px; background: #fff; box-shadow: 0 16px 44px rgba(0,0,0,.22); display: flex; flex-direction: column; gap: 15px; }
+.modal-backdrop { position: fixed; z-index: 40; inset: 0; display: grid; place-items: center; padding: 20px; background: rgba(20,28,36,.45); overflow-y: auto; }
+.modal { width: min(480px, 100%); max-height: calc(100vh - 40px); padding: 22px; border-radius: 7px; background: #fff; box-shadow: 0 16px 44px rgba(0,0,0,.22); display: flex; flex-direction: column; gap: 15px; overflow-y: auto; }
 .modal-header { display: flex; align-items: center; justify-content: space-between; }
 .modal-header h2 { font-size: 17px; }
 .modal-header p { margin-top: 4px; color: #76818c; font-size: 11px; }
 .modal-header button { width: 30px; height: 30px; border: 0; background: transparent; color: #66727d; font-size: 22px; cursor: pointer; }
 .modal-notice { padding: 10px 12px; border-left: 3px solid #75a1cf; background: #f3f7fb; color: #627587; font-size: 10px; line-height: 1.5; }
+.modal-notice--success { border-left-color: #21a366; background: #f1faf5; color: #2f6d4b; }
 .modal label { display: flex; flex-direction: column; gap: 6px; color: #52606c; font-size: 11px; font-weight: 700; }
 .modal input, .modal select, .modal textarea { width: 100%; min-height: 38px; padding: 9px 10px; border: 1px solid #ccd3da; border-radius: 5px; background: #fff; color: #26323d; font: inherit; font-size: 12px; }
 .modal textarea { min-height: 86px; resize: vertical; }
 .modal .code-input { min-height: 120px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-.modal--wide { width: min(620px, 100%); }
+.modal--wide { width: min(760px, 100%); }
 .modal-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .modal label small { color: #8a949d; font-size: 9px; font-weight: 400; }
 .check-row { flex-direction: row !important; align-items: center; font-weight: 500 !important; }
 .check-row input { width: 15px; min-height: 15px; }
+.parameter-box { padding: 14px; border: 1px solid #dfe4e8; border-radius: 7px; background: #fbfcfd; }
+.parameter-box .setting-heading { margin-bottom: 12px; }
+.parameter-box h3 { font-size: 13px; }
+.parameter-row { display: grid; grid-template-columns: 1fr .8fr .8fr .6fr 1.2fr 1fr 40px; gap: 10px; align-items: end; }
+.parameter-row + .parameter-row { margin-top: 10px; }
+.parameter-row--self-bind { grid-template-columns: 1fr .8fr .8fr .6fr 1.2fr 1fr .9fr 40px; }
+.parameter-row--db { grid-template-columns: 1fr .8fr .6fr 40px; }
+.parameter-row--db.parameter-row--self-bind { grid-template-columns: 1fr .8fr .6fr .9fr 40px; }
+.self-bind-cell { color: #1769c2; font-size: 10px; }
+.scope-block { padding: 14px; border: 1px solid #dfe4e8; border-radius: 7px; background: #fbfcfd; }
+.scope-block h3 { margin-bottom: 10px; font-size: 13px; }
+.scope-options { display: flex; gap: 18px; }
+.scope-option { flex-direction: row !important; align-items: center; gap: 6px; font-weight: 500 !important; cursor: pointer; }
+.scope-warning { margin-top: 12px; padding: 10px 12px; border: 1px solid #ead7a9; border-radius: 6px; background: #fff9eb; color: #7c5812; font-size: 11px; line-height: 1.55; }
+.self-bind-note { margin-top: 12px; padding: 10px 12px; border: 1px solid #b9d3f0; border-radius: 6px; background: #eef5fc; color: #1759a8; font-size: 11px; line-height: 1.55; }
+.badge--scope-self { background: #eaf2ff; color: #1759a8; }
+.badge--scope-open { background: #fff4d9; color: #966300; }
+.request-preview { margin-top: 12px; padding: 10px 12px; border-radius: 6px; background: #eef5fc; display: flex; flex-direction: column; gap: 6px; }
+.request-preview span { color: #58708a; font-size: 10px; font-weight: 700; }
+.request-preview code { overflow-wrap: anywhere; }
+.auth-box { padding: 14px; border: 1px solid #dfe4e8; border-radius: 7px; background: #fff; }
+.auth-box h3 { margin-bottom: 12px; font-size: 13px; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
 .routing-note { margin-top: 14px; }
 .ai-instruction-block { margin-bottom: 0; }
@@ -722,6 +1089,31 @@ code { padding: 2px 5px; border-radius: 3px; background: #f0f2f4; color: #485561
 .ai-input { flex: 1; width: auto; min-width: 0; }
 .rr-text { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; max-width: 340px; line-height: 1.5; color: #3d4b57; font-size: 12px; }
 .keyword-text { color: #587493; font-size: 11px; }
+.tool-builder { display: grid; gap: 16px; }
+.builder-panel { padding: 18px; border: 1px solid #dfe4e8; border-radius: 7px; background: #fff; }
+.builder-panel + .builder-panel { margin-top: 0; }
+.builder-panel h3 { font-size: 14px; }
+.builder-panel--preview { border-color: #cbdcf0; background: #fbfdff; }
+.chip-grid { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.chip-check { display: inline-flex; align-items: center; gap: 7px; padding: 8px 10px; border: 1px solid #d6dde4; border-radius: 999px; background: #fff; color: #45515d; font-size: 12px; cursor: pointer; }
+.chip-check input { width: 14px; height: 14px; }
+.lookup-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-top: 14px; }
+.query-summary { padding: 15px; border: 1px solid #d8e4f0; border-radius: 7px; background: #f7fbff; color: #354553; font-size: 13px; line-height: 1.7; }
+.query-summary strong { display: block; margin-bottom: 4px; color: #1f344a; font-size: 13px; }
+.query-summary p { margin-bottom: 10px; }
+.sql-preview, .schema-preview { margin-top: 10px; padding: 13px; border: 1px solid #d8e0e7; border-radius: 6px; background: #17212b; color: #dce9f5; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; line-height: 1.55; white-space: pre-wrap; }
+.schema-preview { background: #f7f9fb; color: #33404c; }
+.catalog-grid { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 14px; }
+.catalog-tables { display: flex; flex-direction: column; gap: 8px; }
+.catalog-tables button { padding: 11px 12px; border: 1px solid #d9dfe5; border-radius: 6px; background: #fff; color: #53606d; text-align: left; cursor: pointer; }
+.catalog-tables button.active { border-color: #9dc1e8; background: #eaf2ff; color: #1759a8; }
+.catalog-tables strong { display: block; font-size: 12px; }
+.catalog-tables span { display: block; margin-top: 4px; font-size: 10px; color: #7d8790; }
+.catalog-column-table { min-width: 860px; }
+.catalog-column-table input[type='text'], .catalog-column-table input:not([type]) { width: 100%; min-height: 30px; padding: 6px 8px; border: 1px solid #d3d9df; border-radius: 4px; font-size: 11px; }
+.catalog-column-table input[type='checkbox'] { width: 15px; height: 15px; }
+.row-muted { background: #faf6f6; }
+.row-muted td { color: #8a6f6f; }
 
 @media (max-width: 1100px) {
   .workspace { padding: 24px; }
@@ -729,6 +1121,7 @@ code { padding: 2px 5px; border-radius: 3px; background: #f0f2f4; color: #485561
   .quality-grid { grid-template-columns: 1fr; }
   .document-grid { grid-template-columns: 1fr; }
   .document-summary { grid-template-columns: 1fr 1fr; }
+  .catalog-grid { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 800px) {
@@ -754,7 +1147,8 @@ code { padding: 2px 5px; border-radius: 3px; background: #f0f2f4; color: #485561
   .toolbar { align-items: stretch; flex-direction: column; }
   .search-input, .select-input { width: 100%; }
   .input-meta { align-items: flex-start; flex-direction: column; gap: 4px; }
-  .form-grid, .modal-grid { grid-template-columns: 1fr; }
+  .form-grid, .modal-grid, .parameter-row { grid-template-columns: 1fr; }
+  .lookup-grid { grid-template-columns: 1fr; }
   .field--wide { grid-column: auto; }
   .document-summary { grid-template-columns: 1fr; }
   .title-actions, .sync-action { align-items: stretch; flex-direction: column; }
