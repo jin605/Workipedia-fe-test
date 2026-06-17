@@ -4,6 +4,7 @@ import { computed, ref } from 'vue'
 type Section = 'prompt' | 'department' | 'documents' | 'tools' | 'knowledge' | 'routing' | 'sync'
 type HttpParamLocation = 'PATH' | 'QUERY' | 'HEADER'
 type ToolScope = 'self' | 'open' | null
+type DepartmentSyncStatus = 'SYNCED' | 'PENDING' | 'FAILED' | 'EMPTY'
 
 const sections: { id: Section; label: string; group: string }[] = [
   { id: 'prompt', label: '프롬프트 관리', group: 'AI 설정' },
@@ -64,14 +65,13 @@ const activeSection = ref<Section>('prompt')
 const savedNotice = ref('')
 const toolModalOpen = ref(false)
 const dbToolModalOpen = ref(false)
-const departmentModalOpen = ref(false)
-const departmentEditModalOpen = ref(false)
 const toolFilter = ref('전체')
 const routingFilter = ref('전체')
 const promptEnabled = ref(true)
 const aiInstruction = ref('')
 const aiLoading = ref(false)
-const editingDepartment = ref<{ departmentId: number; departmentName: string; rr: string; keywords: string } | null>(null)
+const editingDepartmentId = ref<number | null>(3)
+const editingRr = ref('CI/CD 파이프라인, 서버 배포, 클라우드 인프라 관련 문의를 담당합니다. Kubernetes, Docker, AWS 관련 장애 및 설정 문의 티켓을 처리합니다.')
 
 // DB Query Tool은 카탈로그 스캔 없이 미리 등록된 고정 datasource 중에서만 고른다(애플리케이션 설정에 있는 값).
 const fixedDatasources = [
@@ -108,55 +108,107 @@ const dbToolParams = ref([
 const nextDbParamId = ref(2)
 const dbSelfBindParamId = ref<number | null>(null)
 
-const allDepartments = [
-  { departmentId: 1, departmentName: '개발 1팀' },
-  { departmentId: 2, departmentName: '개발 2팀' },
-  { departmentId: 3, departmentName: 'IT지원팀' },
-  { departmentId: 4, departmentName: '자산관리팀' },
-  { departmentId: 5, departmentName: '정보보안팀' },
-  { departmentId: 6, departmentName: '인사팀' },
-  { departmentId: 7, departmentName: '법무팀' },
-  { departmentId: 8, departmentName: '경영지원팀' },
-]
-
 const departments = ref([
-  { departmentId: 1, departmentName: '개발 1팀', rr: '개발 1팀은 ERP 및 사내 계정 서비스를 담당한다.', keywords: '권한, 로그인, 배치 오류', cases: 142, syncStatus: 'SYNCED' },
-  { departmentId: 2, departmentName: '개발 2팀', rr: '개발 2팀은 검색 및 AI 서비스를 담당한다.', keywords: '검색 품질, 챗봇 응답', cases: 96, syncStatus: 'SYNCED' },
-  { departmentId: 3, departmentName: 'IT지원팀', rr: 'IT지원팀은 임직원 IT 환경을 지원한다.', keywords: '접속, 노트북, 네트워크', cases: 238, syncStatus: 'SYNCED' },
-  { departmentId: 4, departmentName: '자산관리팀', rr: '자산관리팀은 IT 자산 지급 및 회수를 담당한다.', keywords: '지급, 반납, 재고', cases: 81, syncStatus: 'PENDING' },
+  {
+    departmentId: 1,
+    departmentName: '개발 1팀',
+    rr: '백엔드 API 개발, 서버 인프라 관련 문의를 담당합니다. Java/Spring 기반 시스템 오류, DB 연동 문제, API 명세 관련 티켓을 처리합니다.',
+    syncStatus: 'SYNCED' as DepartmentSyncStatus,
+    syncInfo: '마지막 동기화: 2026-06-17 14:32',
+  },
+  {
+    departmentId: 2,
+    departmentName: '개발 2팀',
+    rr: '프론트엔드 UI/UX, 브라우저 호환성 문제를 담당합니다. React 기반 화면 오류, 디자인 시스템 관련 티켓을 처리합니다.',
+    syncStatus: 'PENDING' as DepartmentSyncStatus,
+    syncInfo: '마지막 동기화 대기 중',
+  },
+  {
+    departmentId: 3,
+    departmentName: '인프라팀',
+    rr: 'CI/CD 파이프라인, 서버 배포, 클라우드 인프라 관련 문의를 담당합니다. Kubernetes, Docker, AWS 관련 장애 및 설정 문의 티켓을 처리합니다.',
+    syncStatus: 'SYNCED' as DepartmentSyncStatus,
+    syncInfo: '마지막 동기화: 2026-06-17 13:20',
+  },
+  {
+    departmentId: 4,
+    departmentName: '보안팀',
+    rr: '정보보안, 접근 권한, 취약점 관련 문의를 담당합니다. 계정 탈취 의심, 보안 감사, 권한 오류 관련 티켓을 처리합니다.',
+    syncStatus: 'FAILED' as DepartmentSyncStatus,
+    syncInfo: '마지막 동기화 실패: 2026-06-17 09:14',
+  },
+  {
+    departmentId: 5,
+    departmentName: '데이터팀',
+    rr: '데이터 분석, BI 리포트, 데이터 파이프라인 관련 문의를 담당합니다. SQL 쿼리 오류, 대시보드 데이터 불일치, ETL 장애 티켓을 처리합니다.',
+    syncStatus: 'SYNCED' as DepartmentSyncStatus,
+    syncInfo: '마지막 동기화: 2026-06-17 11:05',
+  },
+  {
+    departmentId: 6,
+    departmentName: 'QA팀',
+    rr: '',
+    syncStatus: 'EMPTY' as DepartmentSyncStatus,
+    syncInfo: '',
+  },
 ])
 
-const unregisteredDepartments = computed(() => {
-  const registeredIds = new Set(departments.value.map(d => d.departmentId))
-  return allDepartments.filter(d => !registeredIds.has(d.departmentId))
-})
+const departmentSummary = computed(() => ({
+  total: departments.value.length,
+  synced: departments.value.filter((dept) => dept.syncStatus === 'SYNCED').length,
+  pending: departments.value.filter((dept) => dept.syncStatus === 'PENDING').length,
+  failed: departments.value.filter((dept) => dept.syncStatus === 'FAILED').length,
+}))
 
-function openEditModal(dept: typeof departments.value[0]) {
-  editingDepartment.value = { departmentId: dept.departmentId, departmentName: dept.departmentName, rr: dept.rr, keywords: dept.keywords }
-  departmentEditModalOpen.value = true
+function getDepartmentStatusLabel(status: DepartmentSyncStatus) {
+  const labels: Record<DepartmentSyncStatus, string> = {
+    SYNCED: '동기화 완료',
+    PENDING: '동기화 대기',
+    FAILED: '동기화 실패',
+    EMPTY: '미설정',
+  }
+  return labels[status]
 }
 
-function saveEditModal() {
-  if (!editingDepartment.value) return
-  const dept = departments.value.find(d => d.departmentId === editingDepartment.value!.departmentId)
+function startDepartmentEdit(dept: typeof departments.value[0]) {
+  editingDepartmentId.value = dept.departmentId
+  editingRr.value = dept.rr
+}
+
+function cancelDepartmentEdit() {
+  editingDepartmentId.value = null
+  editingRr.value = ''
+}
+
+function saveDepartmentEdit(departmentId: number) {
+  const dept = departments.value.find(d => d.departmentId === departmentId)
   if (dept) {
-    dept.departmentName = editingDepartment.value.departmentName
-    dept.rr = editingDepartment.value.rr
-    dept.keywords = editingDepartment.value.keywords
+    dept.rr = editingRr.value.trim()
+    dept.syncStatus = dept.rr ? 'PENDING' : 'EMPTY'
+    dept.syncInfo = dept.rr ? '동기화 대기 중' : ''
   }
-  departmentEditModalOpen.value = false
-  showSaved('배정 기준을 저장하고 Vector Store에 반영했습니다.')
+  cancelDepartmentEdit()
+  showSaved('R&R 프롬프트를 저장하고 동기화를 요청했습니다.')
+}
+
+function retryDepartmentSync(departmentId: number) {
+  const dept = departments.value.find(d => d.departmentId === departmentId)
+  if (!dept) return
+  dept.syncStatus = 'PENDING'
+  dept.syncInfo = '재시도 요청됨'
+  showSaved(`${dept.departmentName} 동기화를 다시 요청했습니다.`)
 }
 
 function applyAiInstruction() {
   if (!aiInstruction.value.trim()) return
   aiLoading.value = true
   window.setTimeout(() => {
-    departments.value[1].rr = '개발 2팀은 검색과 RAG를 담당한다.'
-    departments.value[1].keywords = '검색 품질, RAG, 챗봇 응답'
+    departments.value[1].rr = '프론트엔드 UI/UX, 검색 화면, RAG 응답 품질과 브라우저 호환성 문제를 담당합니다. React 기반 화면 오류와 디자인 시스템 관련 티켓을 처리합니다.'
+    departments.value[1].syncStatus = 'PENDING'
+    departments.value[1].syncInfo = 'AI 수정 반영 후 동기화 대기 중'
     aiLoading.value = false
     aiInstruction.value = ''
-    showSaved('AI가 R&R을 수정하고 Vector Store에 반영했습니다.')
+    showSaved('AI가 R&R을 수정하고 동기화를 요청했습니다.')
   }, 1200)
 }
 const customPrompt = ref(
@@ -464,48 +516,75 @@ function onManualFileChange(event: Event) {
               <h2>부서 티켓 배정 관리</h2>
               <p>티켓을 담당 부서에 추천·배정할 때 사용하는 R&R 설명을 관리합니다.</p>
             </div>
-            <button class="button button--primary" @click="departmentModalOpen = true">배정 기준 추가</button>
           </div>
 
-          <div class="setting-block ai-instruction-block">
+          <div class="department-ai-box">
             <div class="setting-heading">
               <div>
                 <h3>AI 일괄 수정</h3>
-                <p>자연어로 여러 부서의 R&R을 한 번에 수정하고 즉시 동기화합니다. 변경이 필요한 부서만 반영됩니다.</p>
+                <p>모든 부서의 R&R을 AI가 자동으로 수정합니다. 수정 지침을 입력하세요.</p>
               </div>
             </div>
             <div class="ai-input-row">
               <input
                 v-model="aiInstruction"
-                class="search-input ai-input"
-                placeholder="예: 개발 2팀에 RAG 추가하고 IT지원팀에서 VPN 빼줘"
+                class="department-ai-input"
+                placeholder="예: 각 부서 프롬프트에 응답 시간 기준(24시간 이내)을 추가해줘"
                 @keyup.enter="applyAiInstruction"
               />
               <button class="button button--primary" :disabled="!aiInstruction.trim() || aiLoading" @click="applyAiInstruction">
-                {{ aiLoading ? '적용 중...' : 'AI 적용' }}
+                {{ aiLoading ? '적용 중...' : 'AI 수정 적용' }}
               </button>
             </div>
-            <div class="inline-note" style="margin-bottom:0">LLM이 현재 R&R을 기준으로 변경 내용을 해석해 수정하고 Vector Store에 즉시 반영합니다.</div>
           </div>
 
-          <div class="metric-row" style="margin-top:16px">
-            <div class="metric"><span>배정 기준 등록 부서</span><strong>{{ departments.length }}</strong></div>
-            <div class="metric"><span>최근 추천 일치율</span><strong>87.4%</strong></div>
+          <div class="department-section-header">
+            <div>
+              <h3>부서 목록</h3>
+              <span>총 {{ departmentSummary.total }}개 부서 · 완료 {{ departmentSummary.synced }} · 대기 {{ departmentSummary.pending }} · 실패 {{ departmentSummary.failed }}</span>
+            </div>
           </div>
 
-          <div class="table-wrap">
-            <table>
-              <thead><tr><th>부서</th><th>R&R 설명</th><th>업무 키워드</th><th></th></tr></thead>
-              <tbody>
-                <tr v-for="dept in departments" :key="dept.departmentId">
-                  <td><strong>{{ dept.departmentName }}</strong></td>
-                  <td><span class="rr-text">{{ dept.rr }}</span></td>
-                  <td><span class="keyword-text">{{ dept.keywords }}</span></td>
-                  <td><button class="text-button" @click="openEditModal(dept)">수정</button></td>
-                </tr>
-              </tbody>
-            </table>
+          <div class="department-grid">
+            <article v-for="dept in departments" :key="dept.departmentId" class="department-card">
+              <div class="department-card-top">
+                <strong>{{ dept.departmentName }}</strong>
+                <span class="department-sync-badge" :class="`department-sync-badge--${dept.syncStatus.toLowerCase()}`">
+                  {{ getDepartmentStatusLabel(dept.syncStatus) }}
+                </span>
+              </div>
+
+              <template v-if="editingDepartmentId === dept.departmentId">
+                <textarea
+                  v-model="editingRr"
+                  class="department-textarea"
+                  placeholder="부서가 담당하는 역할·책임과 대표 티켓 범위를 입력하세요."
+                />
+                <div class="department-actions">
+                  <button class="button button--secondary" @click="cancelDepartmentEdit">취소</button>
+                  <button class="button button--primary" :disabled="!editingRr.trim()" @click="saveDepartmentEdit(dept.departmentId)">저장</button>
+                </div>
+              </template>
+
+              <template v-else>
+                <p class="department-prompt" :class="{ 'department-prompt--empty': !dept.rr }">
+                  {{ dept.rr || '아직 R&R 프롬프트가 설정되지 않았습니다.' }}
+                </p>
+                <div class="department-actions">
+                  <button v-if="dept.syncStatus === 'FAILED'" class="button button--danger-soft" @click="retryDepartmentSync(dept.departmentId)">재시도</button>
+                  <button
+                    class="button"
+                    :class="dept.rr ? 'button--secondary' : 'button--primary'"
+                    @click="startDepartmentEdit(dept)"
+                  >
+                    {{ dept.rr ? '편집' : '프롬프트 작성' }}
+                  </button>
+                </div>
+                <p v-if="dept.syncInfo" class="department-sync-info">{{ dept.syncInfo }}</p>
+              </template>
+            </article>
           </div>
+
           <div class="inline-note routing-note">
             부서 자체의 생성·삭제는 조직 관리에서 수행합니다. 이 화면에서는 존재하는 부서를 선택해 AI 티켓 배정 기준만 등록합니다.
           </div>
@@ -851,71 +930,6 @@ function onManualFileChange(event: Event) {
       </div>
     </div>
 
-    <div v-if="departmentModalOpen" class="modal-backdrop" @click.self="departmentModalOpen = false">
-      <div class="modal modal--wide">
-        <div class="modal-header">
-          <div>
-            <h2>배정 기준 추가</h2>
-            <p>티켓 라우팅에 사용할 부서의 R&R 설명을 등록합니다.</p>
-          </div>
-          <button aria-label="닫기" @click="departmentModalOpen = false">×</button>
-        </div>
-        <div class="modal-notice">선택 설정입니다. 미등록 부서와 신뢰도 기준을 통과하지 못한 티켓은 공통 접수 큐로 이동합니다.</div>
-        <label>대상 부서
-          <select>
-            <option value="">부서를 선택하세요</option>
-            <option v-for="dept in unregisteredDepartments" :key="dept.departmentId" :value="dept.departmentId">
-              {{ dept.departmentName }}
-            </option>
-          </select>
-          <small v-if="unregisteredDepartments.length === 0">배정 기준이 미등록된 부서가 없습니다.</small>
-        </label>
-        <label>R&R 설명
-          <textarea placeholder="예: 정보보안팀은 보안 정책, 계정 침해, 악성코드 및 개인정보 유출 사고를 담당한다."></textarea>
-        </label>
-        <label>업무 키워드
-          <input placeholder="예: 침해사고, 악성코드, 개인정보" />
-          <small>쉼표로 구분해 입력합니다.</small>
-        </label>
-        <div class="modal-actions">
-          <button class="button button--secondary" @click="departmentModalOpen = false">취소</button>
-          <button class="button button--primary" @click="departmentModalOpen = false; showSaved('배정 기준을 등록하고 동기화를 요청했습니다.')">등록 및 동기화</button>
-        </div>
-      </div>
-    </div>
-
-    <div v-if="departmentEditModalOpen" class="modal-backdrop" @click.self="departmentEditModalOpen = false">
-      <div class="modal modal--wide">
-        <div class="modal-header">
-          <div>
-            <h2>배정 기준 수정</h2>
-            <p v-if="editingDepartment">{{ editingDepartment.departmentName }}</p>
-          </div>
-          <button aria-label="닫기" @click="departmentEditModalOpen = false">×</button>
-        </div>
-        <template v-if="editingDepartment">
-          <label>부서명
-            <select v-model="editingDepartment.departmentName">
-              <option v-for="dept in allDepartments" :key="dept.departmentId" :value="dept.departmentName">
-                {{ dept.departmentName }}
-              </option>
-            </select>
-          </label>
-          <label>R&R 설명
-            <textarea v-model="editingDepartment.rr" style="min-height:100px" placeholder="예: 개발 2팀은 검색 및 AI 서비스를 담당한다."></textarea>
-          </label>
-          <label>업무 키워드
-            <input v-model="editingDepartment.keywords" placeholder="예: 검색 품질, RAG, 챗봇 응답" />
-            <small>쉼표로 구분해 입력합니다.</small>
-          </label>
-        </template>
-        <div class="modal-actions">
-          <button class="button button--secondary" @click="departmentEditModalOpen = false">취소</button>
-          <button class="button button--primary" @click="saveEditModal">저장</button>
-        </div>
-      </div>
-    </div>
-
   </div>
 </template>
 
@@ -952,6 +966,8 @@ function onManualFileChange(event: Event) {
 .button--primary:hover { background: #105daF; }
 .button:disabled { background: #b9c2cb; color: #fff; cursor: not-allowed; }
 .button--secondary { border-color: #cfd6dd; background: #fff; color: #33404d; }
+.button--danger-soft { border-color: #f3caca; background: #fff0f0; color: #ae3838; }
+.button--danger-soft:hover { background: #ffe7e7; }
 .setting-block { padding: 20px; border: 1px solid #dfe4e8; border-radius: 7px; background: #fff; }
 .setting-block + .setting-block { margin-top: 16px; }
 .setting-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; margin-bottom: 16px; }
@@ -1084,9 +1100,32 @@ code { padding: 2px 5px; border-radius: 3px; background: #f0f2f4; color: #485561
 .auth-box h3 { margin-bottom: 12px; font-size: 13px; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
 .routing-note { margin-top: 14px; }
-.ai-instruction-block { margin-bottom: 0; }
-.ai-input-row { display: flex; gap: 8px; margin-bottom: 12px; }
-.ai-input { flex: 1; width: auto; min-width: 0; }
+.department-ai-box { margin-bottom: 24px; padding: 20px 24px; border: 1px solid #bfdbfe; border-radius: 8px; background: #eff6ff; }
+.department-ai-box .setting-heading { margin-bottom: 12px; }
+.department-ai-box h3 { color: #1d4ed8; font-size: 14px; }
+.department-ai-box p { color: #475569; font-size: 13px; }
+.ai-input-row { display: flex; gap: 10px; }
+.department-ai-input { flex: 1; min-width: 0; min-height: 40px; padding: 10px 14px; border: 1px solid #93c5fd; border-radius: 6px; background: #fff; color: #1f2a37; font-size: 14px; }
+.department-ai-input:focus { outline: none; border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,.12); }
+.department-section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+.department-section-header h3 { font-size: 15px; }
+.department-section-header span { display: block; margin-top: 4px; color: #64748b; font-size: 12px; }
+.department-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.department-card { min-height: 222px; padding: 20px; border: 1px solid #e2e8f0; border-radius: 8px; background: #fff; display: flex; flex-direction: column; }
+.department-card:hover { border-color: #93c5fd; }
+.department-card-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.department-card-top strong { color: #1f2937; font-size: 15px; }
+.department-sync-badge { flex-shrink: 0; padding: 4px 10px; border-radius: 999px; font-size: 11px; font-weight: 700; }
+.department-sync-badge--synced { background: #dcfce7; color: #15803d; }
+.department-sync-badge--pending { background: #fef9c3; color: #a16207; }
+.department-sync-badge--failed { background: #fee2e2; color: #b91c1c; }
+.department-sync-badge--empty { background: #f1f5f9; color: #94a3b8; }
+.department-prompt { flex: 1; min-height: 88px; margin: 0 0 14px; padding: 12px; border-radius: 8px; background: #f8fafc; color: #475569; font-size: 13px; line-height: 1.6; white-space: pre-wrap; }
+.department-prompt--empty { color: #b8c3cf; font-style: italic; }
+.department-textarea { flex: 1; width: 100%; min-height: 116px; margin-bottom: 14px; padding: 12px; border: 1px solid #3b82f6; border-radius: 8px; background: #f8fafc; color: #1f2937; font: inherit; font-size: 13px; line-height: 1.6; resize: vertical; }
+.department-textarea:focus { outline: none; box-shadow: 0 0 0 3px rgba(59,130,246,.12); }
+.department-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: auto; }
+.department-sync-info { margin: 8px 0 0; color: #94a3b8; font-size: 11px; }
 .rr-text { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; max-width: 340px; line-height: 1.5; color: #3d4b57; font-size: 12px; }
 .keyword-text { color: #587493; font-size: 11px; }
 .tool-builder { display: grid; gap: 16px; }
@@ -1122,6 +1161,7 @@ code { padding: 2px 5px; border-radius: 3px; background: #f0f2f4; color: #485561
   .document-grid { grid-template-columns: 1fr; }
   .document-summary { grid-template-columns: 1fr 1fr; }
   .catalog-grid { grid-template-columns: 1fr; }
+  .department-grid { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 800px) {
@@ -1138,6 +1178,7 @@ code { padding: 2px 5px; border-radius: 3px; background: #f0f2f4; color: #485561
   table { min-width: 680px; }
   .pipeline { grid-template-columns: 1fr; gap: 8px; }
   .pipeline > i { width: 1px; height: 12px; margin-left: 12px; }
+  .ai-input-row { flex-direction: column; }
 }
 
 @media (max-width: 520px) {
